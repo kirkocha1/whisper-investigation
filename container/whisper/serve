@@ -21,8 +21,10 @@ import sys
 
 cpu_count = multiprocessing.cpu_count()
 
-model_server_timeout = os.environ.get('MODEL_SERVER_TIMEOUT', 60)
-model_server_workers = int(os.environ.get('MODEL_SERVER_WORKERS', 1))
+model_server_timeout = os.environ.get('MODEL_SERVER_TIMEOUT', 120)
+model_server_workers = int(os.environ.get('MODEL_SERVER_WORKERS', 4))
+os.environ["WORKER_AMOUNT"] = str(4)
+
 
 def sigterm_handler(nginx_pid, gunicorn_pid):
     try:

@@ -15,8 +15,14 @@ import pandas as pd
 import whisper
 import numpy as np
 import torch
-import base64
 
+import subprocess
+
+import base64
+import atexit
+import time
+import multiprocessing
+import psutil
 import logging
 
 # Configure logging to log to CloudWatch
@@ -26,27 +32,101 @@ logger = logging.getLogger(__name__)
 prefix = "/opt/ml/"
 model_path = os.path.join(prefix, "model")
 
-DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-logger.info(f"DEVICE that is used during inference is {DEVICE}")
+PID = os.getpid()
+
+def get_worker_processes(parent_pid):
+    child_processes = []
+    for process in psutil.process_iter(attrs=['pid', 'ppid', 'name']):
+        try:
+            process_info = process.info
+            pid = process_info['pid']
+            ppid = process_info['ppid']
+            name = process_info['name']
+            if ppid == parent_pid:
+                child_processes.append({"pid": pid, "name": name})
+        except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+            pass
+    
+    return child_processes
+
+
+def get_gpu_info():
+    try:
+        result = subprocess.run(["nvidia-smi"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        if result.returncode == 0:
+            gpu_info = result.stdout
+        else:
+            gpu_info = f"Error running nvidia-smi: {result.stderr}"
+    except Exception as e:
+        gpu_info = f"Error: {str(e)}"
+    return gpu_info
+
+
+def obtain_device():
+    child_processe_ids = list(map(lambda child : child["pid"], get_worker_processes(os.getppid())))
+    worker_core = child_processe_ids.index(PID)
+    os.environ["CUDA_VISIBLE_DEVICES"] = str(worker_core)
+    device = torch.device(f'cuda' if torch.cuda.is_available() else f'cpu')
+    logger.info(f"DEVICE that is used during inference is {device}, worker core: {worker_core}")
+    logger.info(f"GPU DEVICE COUNT {torch.cuda.device_count()}")
+    return device
+
+
+def shutdown_callback():
+    logger.info("inference service is shut down")
+    torch.cuda.empty_cache()
+
+
+atexit.register(shutdown_callback)
+
+def cuda_stats():
+    memory_stats = torch.cuda.memory_stats()
+    total_memory = torch.cuda.get_device_properties(0).total_memory
+    gpu_info = get_gpu_info()
+    allocated = memory_stats['allocated_bytes.all.current'] / 1024**2
+    active = memory_stats['active.all.current'] / 1024**2
+    reserved = memory_stats['reserved_bytes.all.current'] / 1024**2
+    inactive = memory_stats['inactive_split_bytes.all.current'] / 1024**2
+
+    logger.info(f"Total GPU Memory: {total_memory / 1024**2} MB")
+    logger.info(f"Allocated GPU Memory: {allocated} MB")
+    logger.info(f"Active GPU Memory: {active} MB")
+    logger.info(f"Reserved GPU Memory: {reserved} MB")
+    logger.info(f"Inactive GPU Memory: {inactive} MB")
+    logger.info(f"GPU info: {gpu_info}")
+
+    return {
+            "total_memory": total_memory, 
+            "allocated": allocated, 
+            "active": active, 
+            "reserved": reserved, 
+            "inactive": inactive,
+            "gpu_info":  gpu_info
+        }
+
+def load_model():
+    logger.info(f"loading whisper model, PID {PID}")
+    torch.cuda.empty_cache()
+    model = whisper.load_model(os.path.join(model_path, 'model/whisper-gpu.pt'))
+    logger.info(f"model was loaded now it is synced wiht device {DEVICE.type}")
+    model = model.to(DEVICE)
+    options = whisper.DecodingOptions(language="en", without_timestamps=True, fp16 = False)
+    if torch.cuda.is_available:
+        cuda_stats()
+    return {'model': model, 'options': options}
+
+DEVICE = obtain_device()
+whisper_model = load_model()
 
 # A singleton for holding the model. This simply loads the model and holds it.
 # It has a predict function that does a prediction based on the model and the input data.
 class AsrService(object):
     model = None  # Where we keep the model when it's loaded
-    is_loaded = False
-
 
     @classmethod
     def get_model(cls):
-        if not cls.is_loaded:
-            model = whisper.load_model(os.path.join(model_path, 'model/whisper-gpu.pt'))
-            model = model.to(DEVICE)
-            cls.options = whisper.DecodingOptions(language="en", without_timestamps=True, fp16 = False)
-            cls.model = model
-            cls.is_loaded = True
-        logger.info(f'whisper model has been loaded to this device: {cls.model.device.type}')
-        return {'model': cls.model, 'options': cls.options}
+        return whisper_model
 
     @classmethod
     def predict(cls, input, options):
@@ -56,6 +136,13 @@ class AsrService(object):
         options = whisper.DecodingOptions(language="en", without_timestamps=True, fp16 = False)
         output = clf["model"].decode(mel, options)
         return str(output.text)
+    
+    @classmethod
+    def memory_stat(cls):
+        if torch.cuda.is_available():
+            return cuda_stats()
+        else:
+            print("CUDA (GPU) is not available.")
         
 
 def input_fn(request):
@@ -79,8 +166,12 @@ def ping():
     if model_info is not None:
         result = {
             "model_loaded": True,
-            "device": model_info["model"].device.type
+            "device": model_info["model"].device.type,
+            "pid": PID
         }
+        if torch.cuda.is_available():
+            metrics = AsrService.memory_stat()
+            result.update(metrics)
         status = 200
     else:
         result = {"model_loaded": False}

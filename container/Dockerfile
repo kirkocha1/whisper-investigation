@@ -21,7 +21,9 @@ RUN pip install \
     openai-whisper \
     numpy \
     pandas \
-    nvgpu
+    nvgpu \
+    psutil \
+    nvidia-smi
 
 ENV PATH="/opt/program:${PATH}"
 

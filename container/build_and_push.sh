@@ -7,7 +7,15 @@
 # machine and combined with the account and region to form the repository name for ECR.
 image=$1
 
-ada credentials update --account=185114141104 --provider=conduit --role=IibsAdminAccess-DO-NOT-DELETE --once
+auth_script=".aws_login.sh"
+
+# Check if the file exists
+if [ -f "$auth_script" ]; then
+    # If the file exists, execute it
+    ./$auth_script
+else
+    echo "The file $auth_script does not exist."
+fi
 
 if [ "$image" == "" ]
 then

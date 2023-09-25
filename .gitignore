@@ -1,1 +1,3 @@
-local_test/
+local_test/test_dir/
+*/__pycache__/
+*/.aws_login.sh
