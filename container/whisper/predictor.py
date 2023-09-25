@@ -17,26 +17,36 @@ import numpy as np
 import torch
 import base64
 
+import logging
+
+# Configure logging to log to CloudWatch
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 prefix = "/opt/ml/"
 model_path = os.path.join(prefix, "model")
 
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-print(f"DEVICE that is used during inference is {DEVICE}")
+logger.info(f"DEVICE that is used during inference is {DEVICE}")
 
 # A singleton for holding the model. This simply loads the model and holds it.
 # It has a predict function that does a prediction based on the model and the input data.
 class AsrService(object):
     model = None  # Where we keep the model when it's loaded
+    is_loaded = False
+
 
     @classmethod
     def get_model(cls):
-        model = whisper.load_model(os.path.join(model_path, 'large.pt'))
-        model = model.to(DEVICE)
-        print(f'whisper model has been loaded to this device: {model.device.type}')
-        options = whisper.DecodingOptions(language="en", without_timestamps=True, fp16 = False)
-        return {'model': model, 'options': options}
+        if not cls.is_loaded:
+            model = whisper.load_model(os.path.join(model_path, 'model/whisper-gpu.pt'))
+            model = model.to(DEVICE)
+            cls.options = whisper.DecodingOptions(language="en", without_timestamps=True, fp16 = False)
+            cls.model = model
+            cls.is_loaded = True
+        logger.info(f'whisper model has been loaded to this device: {cls.model.device.type}')
+        return {'model': cls.model, 'options': cls.options}
 
     @classmethod
     def predict(cls, input, options):
@@ -65,10 +75,18 @@ app = flask.Flask(__name__)
 
 @app.route("/ping", methods=["GET"])
 def ping():
-    health = AsrService.get_model() is not None  # You can insert a health check here
+    model_info = AsrService.get_model()  # Retrieve model information
+    if model_info is not None:
+        result = {
+            "model_loaded": True,
+            "device": model_info["model"].device.type
+        }
+        status = 200
+    else:
+        result = {"model_loaded": False}
+        status = 404
 
-    status = 200 if health else 404
-    return flask.Response(response="\n", status=status, mimetype="application/json")
+    return flask.jsonify(result), status
 
 
 @app.route("/invocations", methods=["POST"])

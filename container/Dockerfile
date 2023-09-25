@@ -1,6 +1,6 @@
 ARG REGION=us-east-1
 
-FROM 763104351884.dkr.ecr.$REGION.amazonaws.com/pytorch-inference:1.12.1-gpu-py38-cu113-ubuntu20.04-sagemaker
+FROM pytorch/pytorch:latest
 
 ENV PYTHONUNBUFFERED=TRUE
 ENV PYTHONDONTWRITEBYTECODE=TRUE
@@ -21,8 +21,7 @@ RUN pip install \
     openai-whisper \
     numpy \
     pandas \
-    torch \
-    torchaudio
+    nvgpu
 
 ENV PATH="/opt/program:${PATH}"
 
