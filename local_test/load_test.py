@@ -15,7 +15,7 @@ sagemaker_runtime = boto3.client('sagemaker-runtime')
 class Test(HttpUser):
     # wait_time = between(1, 2)  # Wait time between requests (in seconds)
     # Specify your SageMaker endpoint URL
-    host = "https://runtime.sagemaker.us-west-2.amazonaws.com"
+    host = "https://runtime.sagemaker.us-east-1.amazonaws.com"
 
     @staticmethod
     def total_time(start_time) -> float:
@@ -42,7 +42,7 @@ class Test(HttpUser):
         request_payload = json.dumps(data)
         
         content_type = 'application/json'
-        endpoint_name = 'whisper-xlarge-1-gpu-endpoint'
+        endpoint_name = 'whisper-gpu-3-endpoint'
 
         try:
             start_time = time.time()

@@ -34,9 +34,9 @@ then
 fi
 
 
-# Get the region defined in the current configuration (default to us-west-2 if none defined)
+# Get the region defined in the current configuration (default to us-east-1 if none defined)
 region=$(aws configure get region)
-region=${region:-us-west-2}
+region=${region:-us-east-1}
 echo $region
 
 login_to_own_ecr () {

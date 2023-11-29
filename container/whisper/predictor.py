@@ -24,6 +24,23 @@ import time
 import multiprocessing
 import psutil
 import logging
+from datetime import datetime, timedelta
+
+
+DEADLINE_TIME = datetime.now()
+MODEL_NAME = "whisper.pt"
+
+def current_device():
+    if torch.cuda.is_available():
+        print(f"Number of GPUs available: {torch.cuda.device_count()}")
+        print(f"Current CUDA device: {torch.cuda.current_device()}")
+    else:
+        print("CUDA (GPU) is not available.")
+
+
+def reset_deadline():
+    global DEADLINE_TIME
+    DEADLINE_TIME = datetime.now() + timedelta(minutes=5)
 
 # Configure logging to log to CloudWatch
 logging.basicConfig(level=logging.INFO)
@@ -32,8 +49,8 @@ logger = logging.getLogger(__name__)
 prefix = "/opt/ml/"
 model_path = os.path.join(prefix, "model")
 
-
 PID = os.getpid()
+
 
 def get_worker_processes(parent_pid):
     child_processes = []
@@ -67,9 +84,14 @@ def obtain_device():
     child_processe_ids = list(map(lambda child : child["pid"], get_worker_processes(os.getppid())))
     worker_core = child_processe_ids.index(PID)
     os.environ["CUDA_VISIBLE_DEVICES"] = str(worker_core)
-    device = torch.device(f'cuda' if torch.cuda.is_available() else f'cpu')
-    logger.info(f"DEVICE that is used during inference is {device}, worker core: {worker_core}")
-    logger.info(f"GPU DEVICE COUNT {torch.cuda.device_count()}")
+    if torch.cuda.is_available():    
+        device = torch.device("cuda")
+        current_device()
+        logger.info(f"DEVICE that is used during inference is {device}, worker core: {worker_core}")
+    else:
+        device = torch.device("cpu")
+        logger.info(f"DEVICE that is used during inference is {device}")
+    logger.info(f"Pytorch version that is used by service is {torch.__version__}")
     return device
 
 
@@ -106,14 +128,11 @@ def cuda_stats():
         }
 
 def load_model():
-    logger.info(f"loading whisper model, PID {PID}")
-    torch.cuda.empty_cache()
-    model = whisper.load_model(os.path.join(model_path, 'model/whisper-gpu.pt'))
-    logger.info(f"model was loaded now it is synced wiht device {DEVICE.type}")
+    logger.info(f"loading whisper model, PID {PID}, device type {DEVICE.type}")
+    model = whisper.load_model(os.path.join(model_path, MODEL_NAME))
     model = model.to(DEVICE)
+    logger.info(f"model was loaded now it is synced with device {DEVICE.type}")
     options = whisper.DecodingOptions(language="en", without_timestamps=True, fp16 = False)
-    if torch.cuda.is_available:
-        cuda_stats()
     return {'model': model, 'options': options}
 
 DEVICE = obtain_device()
@@ -132,7 +151,7 @@ class AsrService(object):
     def predict(cls, input, options):
         clf = cls.get_model()
         audio = whisper.pad_or_trim(input.flatten()).to(DEVICE)
-        mel = whisper.log_mel_spectrogram(audio)
+        mel = whisper.log_mel_spectrogram(audio).to(DEVICE)
         options = whisper.DecodingOptions(language="en", without_timestamps=True, fp16 = False)
         output = clf["model"].decode(mel, options)
         return str(output.text)
@@ -169,9 +188,11 @@ def ping():
             "device": model_info["model"].device.type,
             "pid": PID
         }
-        if torch.cuda.is_available():
+        current_time = datetime.now()
+        if current_time > DEADLINE_TIME and torch.cuda.is_available():
             metrics = AsrService.memory_stat()
             result.update(metrics)
+            reset_deadline()
         status = 200
     else:
         result = {"model_loaded": False}

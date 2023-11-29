@@ -42,7 +42,6 @@ class LibriSpeech(torch.utils.data.Dataset):
 def test_model():
     dataset = LibriSpeech("test-clean")
     audio, sample_rate, text, _, _, _ = dataset.dataset[0]
-
     # Convert the audio data to a Base64-encoded string
     audio_base64 = base64.b64encode(audio.numpy().tobytes()).decode("utf-8")
     
